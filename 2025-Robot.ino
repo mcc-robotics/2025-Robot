@@ -70,7 +70,7 @@ const uint8_t qtrSensorCount = sizeof(qtrSensorPins) / sizeof(qtrSensorPins[0]);
 // Motor Setup
 MeMegaPiDCMotor Left_Motor(PORT1A);
 MeMegaPiDCMotor Right_Motor(PORT1B);
-const uint8_t SpeedMultiplier = 175; // should be multiplied by something from [0, 1]
+const uint8_t SpeedMultiplier = 75; // should be multiplied by something from [0, 1]
 
 // Servos
 Servo ChopServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
@@ -137,7 +137,6 @@ void setup() {
   RulerServo.write(RulerSDn);   //Iniitialize ruler servo down
   ChopServo.write(ChopSDn);     //Initialize chop servo down
   AlignServo.write(AlignSDn);   //Initialize align servo down
-  delay(5000);  // delay to do mechanical setup if needed.
   
   // ------------- QTR Init -------------
   // Read from only ODD
@@ -153,23 +152,27 @@ void setup() {
   while (StateStartSensor == LOW) {
     StateStartSensor = digitalRead(StartupSensor);  //Read startup sensor state
   }
+
+  StraightToBlack();
   // ------------------------------------
 }
 
 void loop() {
+  // LFollow();
+
   //  This is the path for the Gold robot                                       //This is the running code section for the Gold Robot.
-  int StateStartSensor = LOW;
-  if (Type=="Gold") {
-    StraightToBlack();
-  }  //Closing of if statement
+  // int StateStartSensor = LOW;
+  // if (Type=="Gold") {
+  //   StraightToBlack();
+  // }  //Closing of if statement
 
 
-  // This is the path for the Black robot                                      //This is the running code section for the Black Robot.
-  if (Type=="Black"){
-    StraightToBlack();
-  }  //closing of if statement
+  // // This is the path for the Black robot                                      //This is the running code section for the Black Robot.
+  // if (Type=="Black"){
+  //   StraightToBlack();
+  // }  //closing of if statement
 
-  while(true);
+  // while(true);
 }  //Closing bracket for the main loop
 
 //
@@ -226,7 +229,12 @@ void Drive(uint8_t leftSpeed, uint8_t rightSpeed) {
   Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
 }
 
-// Should problably only be used in LineFollowing()
+// Returns true when I'm done moving to the desired angle
+bool TurnToAngle(double angle) {
+
+}
+
+// Should problably only be used in LFollow()
 int8_t ReadLinePosiition() {
   int8_t position = 0;
   int8_t midpoint = qtrSensorCount / 2;
@@ -236,11 +244,6 @@ int8_t ReadLinePosiition() {
   }
 
   return position;
-}
-
-// Returns true when I'm done moving to the desired angle
-bool TurnToAngle(double angle) {
-
 }
 
 void LFollow() {
@@ -333,13 +336,13 @@ void goldPath(){
   };
 
   while (!checkAngle){ //line follows until it detects a curved path
-    LineFollowing();
+    LFollow();
   } 
 
   unsigned long startTime = millis();
 
   while (!stop){
-    LineFollowing();
+    LFollow();
 
     if (millis() - startTime == shootdelay){
       ShootPuck();
