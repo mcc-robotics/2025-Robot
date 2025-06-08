@@ -1,4 +1,3 @@
-
 #include <MeMegaPi.h>  // Needed to use and includes the Servo library
 #include <MPU6050_6Axis_MotionApps20.h>
 #include <PID_v1.h>
@@ -7,7 +6,13 @@ void StraightToBlack(); //function prototype
 
 void LFollow();  //function protype  this is the basic line follow loop.  You can call this from LFollowToBlack and LFollowDistance
 void LFollowToBlack();  // function prototype
-void LFollowDistance(int distance);  // function prototype to line follow for a specified distance in inches
+void LFollowTime(int msecs);  // function prototype to line follow for a specified time in msecs
+void LFollowToAngle(int angle);  // function prototype to line follow till a relative angle
+
+void Drive(int16_t leftSpeed, int16_t rightSpeed);
+void DriveToBlack();
+
+void Stop();
 
 void ShootPuck();    // Function prototype for a specified robot of "Black" or "Gold"
 
@@ -15,6 +20,9 @@ void RightUntilBlack();  //Function prototype to rotate right until you see a bl
 void LeftUntilBlack();  //function prototype to rotate left until you see a black line.
 
 float ConvertToRadians(float degrees); //function prototype to convert Degrees to Radians
+float ConvertToDegrees(float radians); //function prototype to convert Radians to Degrees
+float RetrieveRelativeAngle(float angle);
+bool TurnToAngle(double angle); //function prototype to turn to a certain degree
 
 float GetCurrentTurnAngle(); //function prototype return current turn angle in Radians
 //
@@ -23,7 +31,7 @@ float GetCurrentTurnAngle(); //function prototype return current turn angle in R
 int BCSVert = 0;  //Black chop servo vertical angle
 int BCSDn = 96;  //Black chop servo down position
 int BCSMid = BCSDn-5;  //Black chop servo mid position
-int BCSUp = BCSDn-15;  //Black chop servo up position
+int BCSUp = BCSDn-80;  //Black chop servo up position
 int BASVert = 90;  //Black align servo up position
 int BASDn = 7;  //Black align servo down position
 int BASMid = BASDn+10;  //Black align servo mid position
@@ -35,11 +43,11 @@ int BRulerSDn = 90;  //Black ruler servo down position
 int GCSVert = 100;  //Gold chop servo vertical angle
 int GCSDn = 10;  //Gold chop servo down position
 int GCSMid = GCSDn+5;  //Gold chop servo mid position
-int GCSUp = GCSDn+15;  //Gold chop servo up position
+int GCSUp = GCSDn+80;  //Gold chop servo up position
 int GASVert = 0;  //Gold align servo vertical position
 int GASDn = 87;  //Gold align servo down position
 int GASMid = GASDn-10;  //Gold align servo mid position
-int GASUp = GASDn-45;  //Gold align servo up position
+int GASUp = GASDn-75;  //Gold align servo up position
 int GRulerSOut = 45;  //Gold ruler servo out position
 int GRulerSDn= 90;  //Gold ruler servo down position
 
@@ -70,7 +78,7 @@ const uint8_t qtrSensorCount = sizeof(qtrSensorPins) / sizeof(qtrSensorPins[0]);
 // Motor Setup
 MeMegaPiDCMotor Left_Motor(PORT1A);
 MeMegaPiDCMotor Right_Motor(PORT1B);
-const uint8_t SpeedMultiplier = 75; // should be multiplied by something from [0, 1]
+uint8_t SpeedMultiplier = 175; // should be multiplied by something from [0, 1]
 
 // Servos
 Servo ChopServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
@@ -88,7 +96,8 @@ float StartTurnAngleOffset = 0;
 
 // Line Following constants
 const double TOLLERANCE = 0.1;
-const double TURN_STRENGTH = 20.0;
+const double TURN_TOLLERANCE = 1;
+const double TURN_STRENGTH = 15.0;
 
 void setup() {
   // put your setup code here, to run once:
@@ -112,9 +121,16 @@ void setup() {
     while (true);
   }
 
+  // Set to move to the start position
+  RulerServo.write(RulerSDn);   //Iniitialize ruler servo down
+  ChopServo.write(ChopSUp);     //Initialize chop servo down
+  AlignServo.write(AlignSUp);   //Initialize align servo down
+
   // Initialize the MPU(Gyro)
   // ------------- MPU Init -------------
+  Serial.println(F("Initializing I2C devices..."));
   mpu.initialize();
+
   if(mpu.testConnection() == false){
     Serial.println("MPU6050 connection failed!!!!!");
     while(true); // Failed so don't continue
@@ -123,20 +139,50 @@ void setup() {
     Serial.println("MPU6050 connection successful");
   }
 
+  // ------------- DMP Init -------------
   Serial.println(F("Initializing DMP..."));
   uint8_t devStatus = mpu.dmpInitialize();
-  mpu.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
-  mpu.CalibrateGyro(6);
-  mpu.setDMPEnabled(true);
+
+  mpu.setXGyroOffset(0);
+  mpu.setYGyroOffset(0);
+  mpu.setZGyroOffset(0);
+  mpu.setXAccelOffset(0);
+  mpu.setYAccelOffset(0);
+  mpu.setZAccelOffset(0);
+
+  bool DMPReady = false;  // Set true if DMP init was successful
+  if (devStatus == 0) {
+    mpu.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
+    mpu.CalibrateGyro(6);
+    Serial.println("These are the Active offsets: ");
+    mpu.PrintActiveOffsets();
+    Serial.println(F("Enabling DMP..."));   //Turning ON DMP
+    mpu.setDMPEnabled(true);
+
+    /* Set the DMP Ready flag so the main loop() function knows it is okay to use it */
+    Serial.println(F("DMP ready! Waiting for first interrupt..."));
+    DMPReady = true;
+    packetSize = mpu.dmpGetFIFOPacketSize(); //Get expected DMP packet size for later comparison
+  } 
+  else {
+    Serial.print(F("DMP Initialization failed (code ")); //Print the error code
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+
+    switch (devStatus) {
+      case 1:
+        Serial.println(F("DMP configuration updates failed"));
+        break;
+      case 2:
+        Serial.println(F("Initial memory load failed"));
+        break;
+      default:
+        Serial.println(F("Unknown Error Code"));
+    }
+  }
 
   StartTurnAngleOffset = GetCurrentTurnAngle();
   // ------------------------------------
-
-
-  // Set to move to the start position
-  RulerServo.write(RulerSDn);   //Iniitialize ruler servo down
-  ChopServo.write(ChopSDn);     //Initialize chop servo down
-  AlignServo.write(AlignSDn);   //Initialize align servo down
   
   // ------------- QTR Init -------------
   // Read from only ODD
@@ -153,7 +199,21 @@ void setup() {
     StateStartSensor = digitalRead(StartupSensor);  //Read startup sensor state
   }
 
-  StraightToBlack();
+  DriveToBlack();
+  SpeedMultiplier = 75;
+  TurnToAngle(80);
+
+  ChopServo.write(ChopSDn);     //Initialize chop servo down
+  delay(100);
+  RulerServo.write(RulerSOut);   //Iniitialize ruler servo down
+  AlignServo.write(AlignSDn);   //Initialize align servo down
+
+  SpeedMultiplier = 100;
+  LFollowToAngle(80);
+  SpeedMultiplier = 75;
+  LFollowTime(500);
+  Stop();
+  ShootPuck();
   // ------------------------------------
 }
 
@@ -183,7 +243,7 @@ void StraightToBlack(){
     Drive(SpeedMultiplier, SpeedMultiplier);
   }
 
-  Drive(0,0);
+  Stop();
 }
 
 void SetBlackVariables() {
@@ -224,14 +284,40 @@ void SetGoldVariables() {
   AlignServo.attach(69);
 }
 
-void Drive(uint8_t leftSpeed, uint8_t rightSpeed) {
+void Drive(int16_t leftSpeed, int16_t rightSpeed) {
   Right_Motor.run(rightSpeed);
   Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
 }
 
-// Returns true when I'm done moving to the desired angle
-bool TurnToAngle(double angle) {
+float RetrieveRelativeAngle(float angle) {
+  float finalAngle = angle + ConvertToDegrees(GetCurrentTurnAngle());
 
+  finalAngle = fmod(angle, 360.0);  // Ensure angle is within 0-359
+  if (finalAngle < 0) {
+      finalAngle += 360;  // Handle negative angles
+  }
+  return finalAngle;
+}
+
+// Returns true when I'm done moving to the desired angle
+bool TurnToAngle(double targetAngle) {
+  float currentAngle;
+
+  do {
+    currentAngle = ConvertToDegrees(GetCurrentTurnAngle());
+    
+    if(currentAngle < targetAngle) {
+      //Turn Left
+      Drive(SpeedMultiplier, -SpeedMultiplier);
+    } else {
+      //Turn Right
+      Drive(-SpeedMultiplier, SpeedMultiplier);
+    }
+  }
+  while(abs(targetAngle - currentAngle) > TURN_TOLLERANCE);
+
+  Stop();
+  return true;
 }
 
 // Should problably only be used in LFollow()
@@ -249,6 +335,14 @@ int8_t ReadLinePosiition() {
 void LFollow() {
   int8_t qtrPosition = ReadLinePosiition();
 
+  if(qtrPosition == 0) {
+    if(Type == "Gold") {
+      qtrPosition = 1;
+    } else {
+      qtrPosition = -1;
+    }
+  }
+
   uint8_t leftSpeed = SpeedMultiplier - (qtrPosition * TURN_STRENGTH);
   uint8_t rightSpeed = SpeedMultiplier + (qtrPosition * TURN_STRENGTH);
 
@@ -262,9 +356,36 @@ void LFollowToBlack(){
 }
 //
 //
-void LFollowDistance(int distance){
+void LFollowTime(int msecs) {
+  unsigned long StartTime = millis();
 
+  while(millis() - StartTime < msecs) {
+    Serial.println(millis() - StartTime);
+    LFollow();
+  }
 }
+
+
+void LFollowToAngle(int angle) {
+  float absoluteAngle = RetrieveRelativeAngle(angle);
+
+  while(abs(absoluteAngle - ConvertToDegrees(GetCurrentTurnAngle())) > TURN_TOLLERANCE) {
+    LFollow();
+  }
+}
+
+void DriveToBlack() {
+  while(!digitalRead(qtrSensorPins[qtrSensorCount / 2])) {
+    Drive(SpeedMultiplier, SpeedMultiplier);
+  }
+
+  Stop();
+}
+
+void Stop() {
+  Drive(0, 0);
+}
+
 //
 //
 void ShootPuck() {
@@ -304,14 +425,32 @@ void LeftUntilBlack(){
 //
 
 float GetCurrentTurnAngle() {
-  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-  float angle = ypr[0] - StartTurnAngleOffset;
-  return angle;
+  if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) { // Get the Latest packet Add commentMore actions
+    /* Display Euler angles in degrees */
+    mpu.dmpGetQuaternion(&q, FIFOBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
+
+    ypr[0] -= StartTurnAngleOffset;
+  }
+
+  float convertedAngle;
+  if(ypr[0] > 0) {
+    convertedAngle = ypr[0];
+  } else {
+    convertedAngle = (2*PI) + ypr[0];
+  }
+
+  return convertedAngle;
 }
 
 
 float ConvertToRadians(float degrees) {
   return degrees*PI/180;
+}
+
+float ConvertToDegrees(float radians) {
+  return radians*180/PI;
 }
 
 bool checkAngle() { //function that returns TRUE when robot has travelled the curve
@@ -323,7 +462,6 @@ bool checkAngle() { //function that returns TRUE when robot has travelled the cu
   else{
     return TRUE;
   }
-
 }
 
 void goldPath(){
