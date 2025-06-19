@@ -169,12 +169,8 @@ void setup() {
   delay(1000);
 
   // ------------- DMP Init -------------
-  #if I2CDEV_IMPLEMENTATION == I2CDEV_ARDUINO_WIRE
-    Wire.begin();
-    Wire.setClock(400000); // 400kHz I2C clock. Comment on this line if having compilation difficulties
-  #elif I2CDEV_IMPLEMENTATION == I2CDEV_BUILTIN_FASTWIRE
-    Fastwire::setup(400, true);
-  #endif
+  Wire.begin();
+  Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
   
   Serial.begin(115200); //115200 is required for Teapot Demo output
   while (!Serial);
@@ -228,8 +224,6 @@ void setup() {
   qtr.setSensorPins(qtrSensorPins, qtrSensorCount);
   qtr.setEmitterPin(qtrSensorSelect);
   qtr.setSamplesPerSensor(2);
-
-
 
   LoadQTRCalibration();
 
@@ -392,9 +386,10 @@ void LFollowTime(int msecs) {
 
   while(millis() - StartTime < msecs) {
     Serial.println(millis() - StartTime);
-    Serial.println("LFollowTime");
     LFollow();
   }
+
+  Stop();
 }
 
 
@@ -602,7 +597,6 @@ void goldPath(){                                               //Start of goldPa
   RulerServo.write(RulerSOut);   //Iniitialize ruler servo down
   AlignServo.write(AlignSDn);   //Initialize align servo down
 
-
   LFollowTime(500);
   LFollowToAngle(80);
   LFollowTime(200);
@@ -612,9 +606,9 @@ void goldPath(){                                               //Start of goldPa
   ChopServo.write(ChopSDn);     //Initialize chop servo down
   LFollowToAngle(80);
 
-  delay(5000);
+  LFollowTime(1500);
+  delay(3000);
 
-  LFollowTime(1000);
   LFollowToAngle(80);
   LFollowTime(200);
   Stop();
@@ -650,7 +644,6 @@ void blackPath(){     //                                          Start of black
   Drive(SpeedMultiplier, SpeedMultiplier);
   delay(1000);
   Stop();
-  delay(2500);
   TurnToAngle(60);
   DriveToBlack();
   Drive(SpeedMultiplier, SpeedMultiplier);
