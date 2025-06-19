@@ -1,12 +1,16 @@
+#include <EEPROM.h>
+#include <QTRSensors.h> 
 #include <MeMegaPi.h>  // Needed to use and includes the Servo library  //This is the MakeBlockDrive Library
 #include <MPU6050_6Axis_MotionApps20.h>    //This is from the MPU6050 library by Electronic Cats
-#include <PID_v1.h>          //Needs PID library by Brett Beauregard
 //  List all of the functions (subroutines) here.  These are termed as function prototype.
 void SetBlackVariables();  //function prototype
 void SetGoldVariables();  //function prototype
 void StraightToBlack(); //function prototype
 void blackPath();     //function prototype
 void goldPath();      //function prototype
+
+void SetQTRCalibration();
+void LoadQTRCalibration();
 
 void LFollow();  //function protype  this is the basic line follow loop.  You can call this from LFollowToBlack and LFollowDistance
 void LFollowToBlack();  // function prototype
@@ -33,13 +37,13 @@ float GetCurrentTurnAngle(); //function prototype return current turn angle in R
 //
 
 // Black Robot Variables
-float BMCal= .60;  // This is the right motor speed multiplier to adjust and go straight
+float BMCal= .70;  // This is the right motor speed multiplier to adjust and go straight
 int BCSVert = 0;  //Black chop servo vertical angle
 int BCSDn = 96;  //Black chop servo down position
 int BCSHor = BCSDn-5;  // Black chop servo hoizontal position
 int BCSBlock = BCSDn-15;  //Black chop servo position for holding the ruler under tension
 int BCSMid = BCSDn-45;  //Black chop servo mid position
-int BCSUp = BCSDn-80;  //Black chop servo up position
+int BCSUp = BCSDn-75;  //Black chop servo up position
 int BASVert = 90;  //Black align servo up position
 int BASDn = 7;  //Black align servo down position
 int BASHor = BASDn+1;  //Black align servo horizontal position
@@ -55,7 +59,7 @@ int GCSDn = 10;  //Gold chop servo down position
 int GCSHor = GCSDn+5;  // Gold chop horizontal position
 int GCSBlock = GCSDn+15;  //Gold chop position for holding the ruller under tension
 int GCSMid = GCSDn+45;  //Gold chop servo mid position
-int GCSUp = GCSDn+80;  //Gold chop servo up position
+int GCSUp = GCSDn+78;  //Gold chop servo up position
 int GASVert = 0;  //Gold align servo vertical position
 int GASDn = 87;  //Gold align servo down position
 int GASHor = GASDn-1;  //Gold align servo horizontal position
@@ -91,10 +95,15 @@ int qtrSensorSelect = A6;  // Define pin for qtrSensorSelect (A6 or D60)
 const uint8_t qtrSensorPins[] = { A7, A8, A9, A10, A11, A12 };
 const uint8_t qtrSensorCount = sizeof(qtrSensorPins) / sizeof(qtrSensorPins[0]);
 
+QTRSensors qtr;
+
 // Motor Setup
 MeMegaPiDCMotor Left_Motor(PORT1A);
 MeMegaPiDCMotor Right_Motor(PORT1B);
-uint8_t SpeedMultiplier = 100; // should be multiplied by something from [0, 1]
+uint8_t SpeedMultiplier = 125;
+
+double KP = 0.1;
+double KD = 0.75;
 
 // Servos
 Servo ChopServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
@@ -112,7 +121,7 @@ VectorFloat gravity;    // [x, y, z]            Gravity vector
 // Line Following constants
 const double TOLLERANCE = 0.1;
 const double TURN_TOLLERANCE = 1;
-double TURN_STRENGTH = 15.0;
+double TURN_STRENGTH = 20.0;
 
 void setup() {
   // put your setup code here, to run once:
@@ -215,13 +224,14 @@ void setup() {
   // ------------------------------------
   
   // ------------- QTR Init -------------
-  // Read from only ODD
-  pinMode(qtrSensorSelect, OUTPUT);
-  digitalWrite(qtrSensorSelect, HIGH);
+  qtr.setTypeAnalog(); 
+  qtr.setSensorPins(qtrSensorPins, qtrSensorCount);
+  qtr.setEmitterPin(qtrSensorSelect);
+  qtr.setSamplesPerSensor(2);
 
-  for(uint8_t i = 0; i < qtrSensorCount; i++) {
-    pinMode(qtrSensorPins[i], INPUT);
-  }
+
+
+  LoadQTRCalibration();
 
   Run();
 }
@@ -242,12 +252,12 @@ void Run() {
 
   //   delay(100);
   // }
-
+  
   if (Type=="Gold") {      //This is the running code for the Gold Robot  +++++++++++++++++++ 
     goldPath();
   }  //Closing of If Type is Gold" if statement
   else if (Type=="Black"){
-    delay(5000);  
+    delay(2000);  
     blackPath();
   }  //closing of if Type is "Black" if statement
 }  //Closing bracket for the main void loop
@@ -313,14 +323,8 @@ void SetGoldVariables() {
 }
 
 void Drive(int16_t leftSpeed, int16_t rightSpeed) {
-  if (Type="Gold"){
-    Right_Motor.run(int(rightSpeed*GMCal));
-    Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
-  }
-  if (Type="Black"){
-    Right_Motor.run(int(rightSpeed*BMCal));
-    Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
-  }
+  Right_Motor.run(rightSpeed);
+  Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
 }
 
 // Returns true when I'm done moving to the desired angle
@@ -345,35 +349,33 @@ void TurnToAngle(double relativeAngle) {
       break;
     }
 
+    int16_t turnSpeed = 75;
     if (error > 0) {
       // Turn Left
-      Drive(SpeedMultiplier, -SpeedMultiplier);
+      Drive(turnSpeed, -turnSpeed);
     } else {
       // Turn Right
-      Drive(-SpeedMultiplier, SpeedMultiplier);
+      Drive(-turnSpeed, turnSpeed);
     }
   }
 
   Stop();
 }
 
-// Should problably only be used in LFollow()
-int8_t ReadLinePosition() {
-  int8_t position = 0;
-  int8_t midpoint = qtrSensorCount / 2;
-  for(int8_t i = 0; i < midpoint; i++) {
-    position += digitalRead(qtrSensorPins[i]) * (i - midpoint);
-    position += digitalRead(qtrSensorPins[(qtrSensorCount - 1) - i]) * (midpoint - i);
-  }
-
-  return position;
-}
-
 void LFollow() {
-  int8_t qtrPosition = ReadLinePosition();
+  static uint16_t qtrValues[qtrSensorCount];
+  double qtrPosition = qtr.readLineBlack(qtrValues);
 
-  uint8_t leftSpeed = SpeedMultiplier - (qtrPosition * TURN_STRENGTH);
-  uint8_t rightSpeed = SpeedMultiplier + (qtrPosition * TURN_STRENGTH);
+  static float previousError = 0.0f;
+  float error = (5000.0f / 2.0f) - qtrPosition;
+
+  float derivative = error - previousError;
+
+  float pidOutput = KP * error + KD * derivative;
+  previousError = error;
+
+  int16_t leftSpeed = constrain(SpeedMultiplier + pidOutput, 0, 255);
+  int16_t rightSpeed = constrain(SpeedMultiplier - pidOutput, 0, 255);
 
   Drive(leftSpeed, rightSpeed);
 }
@@ -401,8 +403,8 @@ void LFollowToAngle(int relativeAngle) {
   float targetAngle = startAngle + relativeAngle;
 
   // Normalize to [-180, 180]
-  if (targetAngle > 180) targetAngle -= 360;
-  if (targetAngle < -180) targetAngle += 360;
+  while (targetAngle > 180) targetAngle -= 360;
+  while (targetAngle < -180) targetAngle += 360;
 
   while (true) {
     float currentAngle = GetCurrentTurnAngle();
@@ -415,7 +417,6 @@ void LFollowToAngle(int relativeAngle) {
     if (abs(error) <= TURN_TOLLERANCE) break;
 
     LFollow();
-    Serial.println("LFollowToAngle");
   }
 
   Stop();
@@ -437,7 +438,7 @@ void Stop() {
 //
 //
 void ShootPuck() {
-  AlignServo.write(AlignSMid);  //align servo Up and out of the way
+  AlignServo.write(AlignSUp);  //align servo Up and out of the way
   ChopServo.write(ChopSDn);  //chop servo down and out of the way
   delay(200);
   RulerServo.write(RulerSOut);  //ruler servo out and ready to swing
@@ -452,7 +453,6 @@ void ShootPuck() {
   AlignServo.write(AlignSHor);  //align servo down to be ready for movement
   delay(500);
   ChopServo.write(ChopSHor);  //chop servo mid to be ready for movement
-  delay(500);
 }
 //
 //
@@ -471,15 +471,17 @@ void RotRightUntilBlack(){
 }
 //
 void LeftUntilBlack(){
-  while (digitalRead(qtrSensorPins[2]) == LOW) {   //position 2 is right of center
-    Drive(0, 100);
-  }
+  Drive(0, 100);
+
+  while (digitalRead(qtrSensorPins[2]) == LOW && digitalRead(qtrSensorPins[3]) == LOW);
+
   Stop();
 }
 //
 void RotLeftUntilBlack(){
-  while (digitalRead(qtrSensorPins[2]) == LOW) {   //position 2 is left of center
-    Drive(-100, 100);
+  while (digitalRead(qtrSensorPins[2]) == LOW
+        || digitalRead(qtrSensorPins[3]) == LOW) {   //position 2 is left of center
+    Drive(-100, -100);
   }
   Stop();
 }
@@ -515,11 +517,84 @@ bool checkAngle() { //function that returns TRUE when robot has travelled the cu
   }
 }
 
+void SetQTRCalibration() {
+  Serial.println("Calibrating...");
+  for (int i = 0; i < 200; i++) {
+    delay(5);
+    qtr.calibrate(); // reads all sensors 10 times at 2500 us per read (i.e. ~25 ms per call)
+  }
+
+  int addr = 0;
+  // Save calibrationOn minimum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.put(addr, qtr.calibrationOn.minimum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Save calibrationOn maximum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.put(addr, qtr.calibrationOn.maximum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Save calibrationOff minimum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.put(addr, qtr.calibrationOff.minimum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Save calibrationOff maximum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.put(addr, qtr.calibrationOff.maximum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  Serial.println("Calibration saved to EEPROM.");
+}
+
+void LoadQTRCalibration() {
+  int addr = 0;
+
+  qtr.calibrationOn.minimum = (uint16_t *)realloc(qtr.calibrationOn.minimum, sizeof(uint16_t) * qtrSensorCount);
+  qtr.calibrationOn.maximum = (uint16_t *)realloc(qtr.calibrationOn.maximum, sizeof(uint16_t) * qtrSensorCount);
+  qtr.calibrationOff.minimum = (uint16_t *)realloc(qtr.calibrationOff.minimum, sizeof(uint16_t) * qtrSensorCount);
+  qtr.calibrationOff.maximum = (uint16_t *)realloc(qtr.calibrationOff.maximum, sizeof(uint16_t) * qtrSensorCount);
+
+  // Load calibrationOn minimum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.get(addr, qtr.calibrationOn.minimum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Load calibrationOn maximum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.get(addr, qtr.calibrationOn.maximum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Load calibrationOff minimum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.get(addr, qtr.calibrationOff.minimum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Load calibrationOff maximum
+  for (int i = 0; i < qtrSensorCount; i++) {
+    EEPROM.get(addr, qtr.calibrationOff.maximum[i]);
+    addr += sizeof(uint16_t);
+  }
+
+  // Mark both calibrations initialized
+  qtr.calibrationOn.initialized = true;
+  qtr.calibrationOff.initialized = true;
+
+  Serial.println("Calibration loaded from EEPROM.");
+}
+
 void goldPath(){                                               //Start of goldPath    +++++++++++++++++++++++++
   DriveToBlack();
   Drive(SpeedMultiplier, SpeedMultiplier);
   delay(100);
-  SpeedMultiplier = 75;
   TurnToAngle(80);
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
@@ -527,36 +602,21 @@ void goldPath(){                                               //Start of goldPa
   RulerServo.write(RulerSOut);   //Iniitialize ruler servo down
   AlignServo.write(AlignSDn);   //Initialize align servo down
 
-  SpeedMultiplier = 100;
+
+  LFollowTime(500);
   LFollowToAngle(80);
-  SpeedMultiplier = 75;
-  LFollowTime(525);
+  LFollowTime(200);
   Stop();
   ShootPuck();
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
-  SpeedMultiplier = 75;
   LFollowToAngle(80);
 
-  delay(100);
-  SpeedMultiplier = 100;
-  TurnToAngle(30);
-  delay(250);
-  Drive(SpeedMultiplier, SpeedMultiplier);
-  delay(1000);
-  Stop();
   delay(5000);
-  mpu.resetSensors();
-  TurnToAngle(-60);
-  DriveToBlack();
-  TurnToAngle(30);
 
   LFollowTime(1000);
-
-
   LFollowToAngle(80);
-  SpeedMultiplier = 75;
-  LFollowTime(525);
+  LFollowTime(200);
   Stop();
   ShootPuck();
 }   //end of void goldPath
@@ -565,8 +625,7 @@ void goldPath(){                                               //Start of goldPa
 void blackPath(){     //                                          Start of blackPath  ++++++++++++++++++++++++++++++++++++++
   DriveToBlack();
   Drive(SpeedMultiplier, SpeedMultiplier);
-  delay(200);
-  SpeedMultiplier = 75;
+  delay(100);
   TurnToAngle(-80);
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
@@ -574,20 +633,33 @@ void blackPath(){     //                                          Start of black
   RulerServo.write(RulerSOut);   //Iniitialize ruler servo down
   AlignServo.write(AlignSDn);   //Initialize align servo down
 
-  delay(500);
 
-  SpeedMultiplier = 100;
+  LFollowTime(500);
   LFollowToAngle(-80);
-  SpeedMultiplier = 75;
-  LFollowTime(800);
+  LFollowTime(200);
   Stop();
   ShootPuck();
 
-  SpeedMultiplier = 100;
-  LFollowTime(5000);
+  ChopServo.write(ChopSDn);     //Initialize chop servo down
   LFollowToAngle(-80);
-  SpeedMultiplier = 75;
-  LFollowTime(700);
+
+  LFollowTime(100);
+  delay(100);
+  TurnToAngle(-30);
+  delay(250);
+  Drive(SpeedMultiplier, SpeedMultiplier);
+  delay(1000);
+  Stop();
+  delay(2500);
+  TurnToAngle(60);
+  DriveToBlack();
+  Drive(SpeedMultiplier, SpeedMultiplier);
+  delay(50);
+  LeftUntilBlack();
+
+  LFollowTime(1000);
+  LFollowToAngle(-80);
+  LFollowTime(200);
   Stop();
   ShootPuck();
 
