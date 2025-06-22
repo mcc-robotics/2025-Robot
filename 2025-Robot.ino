@@ -38,7 +38,7 @@ float GetCurrentTurnAngle(); //function prototype return current turn angle in R
 // Black Robot Variables
 float BMCal= .70;  // This is the right motor speed multiplier to adjust and go straight
 int BCSVert = 0;  //Black chop servo vertical angle
-int BCSDn = 96;  //Black chop servo down position
+int BCSDn = 98;  //Black chop servo down position
 int BCSHor = BCSDn-5;  // Black chop servo hoizontal position
 int BCSBlock = BCSDn-15;  //Black chop servo position for holding the ruler under tension
 int BCSMid = BCSDn-45;  //Black chop servo mid position
@@ -101,8 +101,8 @@ MeMegaPiDCMotor Left_Motor(PORT1A);
 MeMegaPiDCMotor Right_Motor(PORT1B);
 uint8_t SpeedMultiplier = 125;
 
-double KP = 0.075;
-double KD = 0.75;
+double KP = 0.05;
+double KD = 0.11;
 
 // Servos
 Servo ChopServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
@@ -379,7 +379,6 @@ void LFollowTime(int msecs) {
   unsigned long StartTime = millis();
 
   while(millis() - StartTime < msecs) {
-    Serial.println(millis() - StartTime);
     LFollow();
   }
 
@@ -628,7 +627,7 @@ void blackPath(){     //                                          Start of black
 
   LFollowTime(500);
   LFollowToAngle(-80);
-  LFollowTime(200);
+  LFollowTime(150);
   Stop();
   ShootPuck();
 
@@ -647,7 +646,7 @@ void blackPath(){     //                                          Start of black
 
   LFollowTime(1000);
   LFollowToAngle(-80);
-  LFollowTime(200);
+  LFollowTime(225);
   Stop();
   ShootPuck();
 
