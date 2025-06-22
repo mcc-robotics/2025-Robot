@@ -5,7 +5,6 @@
 //  List all of the functions (subroutines) here.  These are termed as function prototype.
 void SetBlackVariables();  //function prototype
 void SetGoldVariables();  //function prototype
-void StraightToBlack(); //function prototype
 void blackPath();     //function prototype
 void goldPath();      //function prototype
 
@@ -102,7 +101,7 @@ MeMegaPiDCMotor Left_Motor(PORT1A);
 MeMegaPiDCMotor Right_Motor(PORT1B);
 uint8_t SpeedMultiplier = 125;
 
-double KP = 0.1;
+double KP = 0.075;
 double KD = 0.75;
 
 // Servos
@@ -226,6 +225,7 @@ void setup() {
   qtr.setSamplesPerSensor(2);
 
   LoadQTRCalibration();
+  // SetQTRCalibration();
 
   Run();
 }
@@ -239,10 +239,12 @@ void Run() {
   }
 
   // while(true) {
-  //   for(int8_t i = 0; i < qtrSensorCount; i++) {
-  //     Serial.print(digitalRead(qtrSensorPins[i]));
-  //   }
-  //   Serial.println();
+  //   static uint16_t qtrValues[qtrSensorCount];
+  //   qtr.readCalibrated(qtrValues);
+  //   bool detected = qtrValues[qtrSensorCount / 2] <= 500;
+
+  //   Serial.print("Reading: ");
+  //   Serial.println(detected ? "true" : "false");
 
   //   delay(100);
   // }
@@ -263,14 +265,6 @@ void loop() {
 //
 //  Functions Section                        Functions Section                   Functions Section:
 //
-void StraightToBlack(){
-  while (digitalRead(qtrSensorPins[qtrSensorCount/2]) == LOW) {
-    Drive(SpeedMultiplier, SpeedMultiplier);
-  }
-
-  Stop();
-}
-
 void SetBlackVariables() {
   Type = "Black";
   Serial.println("Type: " + Type);
@@ -419,7 +413,11 @@ void LFollowToAngle(int relativeAngle) {
 
 
 void DriveToBlack() {
-  while(!digitalRead(qtrSensorPins[qtrSensorCount / 2])) {
+  static uint16_t qtrValues[qtrSensorCount];
+  qtr.readCalibrated(qtrValues);
+
+  while(qtrValues[qtrSensorCount / 2] <= 500) {
+    qtr.readCalibrated(qtrValues);
     Drive(SpeedMultiplier, SpeedMultiplier);
   }
 
@@ -646,9 +644,6 @@ void blackPath(){     //                                          Start of black
   Stop();
   TurnToAngle(60);
   DriveToBlack();
-  Drive(SpeedMultiplier, SpeedMultiplier);
-  delay(50);
-  LeftUntilBlack();
 
   LFollowTime(1000);
   LFollowToAngle(-80);
