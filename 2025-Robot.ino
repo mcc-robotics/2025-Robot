@@ -152,21 +152,6 @@ void setup() {
   ChopServo.write(ChopSUp);     //Initialize chop servo down
   AlignServo.write(AlignSUp);   //Initialize align servo down
 
-  // Initialize the MPU(Gyro)
-  // ------------- MPU Init -------------
-  Serial.println(F("Initializing I2C devices..."));
-  mpu.initialize();
-
-  if(mpu.testConnection() == false){
-    Serial.println("MPU6050 connection failed!!!!!");
-    while(true); // Failed so don't continue
-  }
-  else {
-    Serial.println("MPU6050 connection successful");
-  }
-
-  delay(1000);
-
   // ------------- DMP Init -------------
   Wire.begin();
   Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
@@ -179,14 +164,14 @@ void setup() {
   mpu.initialize();
 
   /*Verify connection*/
-  Serial.println(F("Testing MPU6050 connection..."));
-  if(mpu.testConnection() == false){
-    Serial.println("MPU6050 connection failed");
-    while(true);
-  }
-  else {
-    Serial.println("MPU6050 connection successful");
-  }
+  // Serial.println(F("Testing MPU6050 connection..."));
+  // if(mpu.testConnection() == false){
+  //   Serial.println("MPU6050 connection failed");
+  //   while(true);
+  // }
+  // else {
+  //   Serial.println("MPU6050 connection successful");
+  // }
 
   /* Initializate and configure the DMP*/
   Serial.println(F("Initializing DMP..."));
