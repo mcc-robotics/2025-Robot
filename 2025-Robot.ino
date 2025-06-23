@@ -589,7 +589,7 @@ void goldPath(){                                               //Start of goldPa
   LFollowToAngle(80);
 
   LFollowTime(1500);
-  delay(3000);
+  delay(2800);
 
   LFollowToAngle(80);
   LFollowTime(200);
