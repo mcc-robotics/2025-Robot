@@ -1,7 +1,6 @@
 #include <EEPROM.h>
 #include <QTRSensors.h> 
 #include <MeMegaPi.h>  // Needed to use and includes the Servo library  //This is the MakeBlockDrive Library
-#include <MPU6050_6Axis_MotionApps20.h>    //This is from the MPU6050 library by Electronic Cats
 //  List all of the functions (subroutines) here.  These are termed as function prototype.
 void SetBlackVariables();  //function prototype
 void SetGoldVariables();  //function prototype
@@ -11,10 +10,10 @@ void goldPath();      //function prototype
 void SetQTRCalibration();
 void LoadQTRCalibration();
 
-void LFollow();  //function protype  this is the basic line follow loop.  You can call this from LFollowToBlack and LFollowDistance
+float LFollow();  //function protype  this is the basic line follow loop.  You can call this from LFollowToBlack and LFollowDistance
 void LFollowToBlack();  // function prototype
 void LFollowTime(int msecs);  // function prototype to line follow for a specified time in msecs
-void LFollowToAngle(int angle);  // function prototype to line follow till a relative angle
+void LFollowUntilAfterTurn();
 
 void Drive(int16_t leftSpeed, int16_t rightSpeed);
 void DriveToBlack();
@@ -27,12 +26,6 @@ void RightUntilBlack();  //Function prototype to turn right by holding the right
 void RotRightUntilBlack();    // Function prototype to rotate right by turning the right wheel in teh opposite speed of the left wheel.
 void LeftUntilBlack();  //function prototype to turn left by holding the left wheel at zero until you see a black line.
 void RotLeftUntilBlack();   //function prototype to rotate left until you see a black line by turning the left wheel in the opposite speed of the right wheel.
-
-float ConvertToRadians(float degrees); //function prototype to convert Degrees to Radians
-float ConvertToDegrees(float radians); //function prototype to convert Radians to Degrees
-void TurnToAngle(double relativeAngle); //function prototype to turn to a certain degree
-
-float GetCurrentTurnAngle(); //function prototype return current turn angle in Radians
 //
 
 // Black Robot Variables
@@ -102,25 +95,20 @@ MeMegaPiDCMotor Right_Motor(PORT1B);
 uint8_t SpeedMultiplier = 125;
 
 double KP = 0.05;
-double KD = 0.11;
+double KD = 0.14;
 
 // Servos
 Servo ChopServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
 Servo RulerServo;   //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
 Servo AlignServo;  //counterclockwise movement viewed from the top of the servo comes from increasing the angle of degrees 
 
-// Gyro
-MPU6050 mpu;
-uint16_t packetSize;    // Expected DMP packet size (default is 42 bytes)
-uint8_t FIFOBuffer[64]; // FIFO storage buffer
-float ypr[3];           // [yaw, pitch, roll]   Yaw/Pitch/Roll container and gravity vector
-Quaternion q;           // [w, x, y, z]         Quaternion container
-VectorFloat gravity;    // [x, y, z]            Gravity vector
-
 // Line Following constants
 const double TOLLERANCE = 0.1;
 const double TURN_TOLLERANCE = 1;
 double TURN_STRENGTH = 20.0;
+
+int16_t BiasLimit = 12500;  // This is the limit for detecting after the robot line folowed past a turn.
+const int BiasVar = 0.2 * BiasLimit;
 
 void setup() {
   // put your setup code here, to run once:
@@ -129,7 +117,9 @@ void setup() {
   pinMode(ColorSelectP2, INPUT);
   pinMode(qtrSensorSelect,OUTPUT);
   digitalWrite(qtrSensorSelect,HIGH);  //Enable the emitters on the sensors board
+
   Serial.begin(115200);
+  while (!Serial);
 
   //  Find out if it is a gold bot or a black bot.
   int stateP1 = digitalRead(ColorSelectP1);
@@ -152,57 +142,6 @@ void setup() {
   ChopServo.write(ChopSUp);     //Initialize chop servo down
   AlignServo.write(AlignSUp);   //Initialize align servo down
 
-  // ------------- DMP Init -------------
-  Wire.begin();
-  Wire.setClock(400000); // 400kHz I2C clock. Comment this line if having compilation difficulties
-  
-  Serial.begin(115200); //115200 is required for Teapot Demo output
-  while (!Serial);
-
-  /*Initialize device*/
-  Serial.println(F("Initializing I2C devices..."));
-  mpu.initialize();
-
-  /*Verify connection*/
-  // Serial.println(F("Testing MPU6050 connection..."));
-  // if(mpu.testConnection() == false){
-  //   Serial.println("MPU6050 connection failed");
-  //   while(true);
-  // }
-  // else {
-  //   Serial.println("MPU6050 connection successful");
-  // }
-
-  /* Initializate and configure the DMP*/
-  Serial.println(F("Initializing DMP..."));
-  uint8_t devStatus = mpu.dmpInitialize();
-
-  /* Supply your gyro offsets here, scaled for min sensitivity */
-  mpu.setXGyroOffset(0);
-  mpu.setYGyroOffset(0);
-  mpu.setZGyroOffset(0);
-  mpu.setXAccelOffset(0);
-  mpu.setYAccelOffset(0);
-  mpu.setZAccelOffset(0);
-
-  /* Making sure it worked (returns 0 if so) */ 
-  if (devStatus == 0) {
-    mpu.CalibrateAccel(6);  // Calibration Time: generate offsets and calibrate our MPU6050
-    mpu.CalibrateGyro(6);
-    Serial.println("These are the Active offsets: ");
-    mpu.PrintActiveOffsets();
-    Serial.println(F("Enabling DMP..."));   //Turning ON DMP
-    mpu.setDMPEnabled(true);
-  } 
-  else {
-    Serial.print(F("DMP Initialization failed (code ")); //Print the error code
-    Serial.print(devStatus);
-    Serial.println(F(")"));
-    // 1 = initial memory load failed
-    // 2 = DMP configuration updates failed
-  }
-  // ------------------------------------
-  
   // ------------- QTR Init -------------
   qtr.setTypeAnalog(); 
   qtr.setSensorPins(qtrSensorPins, qtrSensorCount);
@@ -274,6 +213,8 @@ void SetBlackVariables() {
 
 void SetGoldVariables() {
   Type = "Gold";
+  KD = 1.3;
+  BiasLimit = 10000;
   Serial.println("Type: " + Type);
   //  initialize my variables
   TURN_STRENGTH = 18.0;
@@ -300,42 +241,7 @@ void Drive(int16_t leftSpeed, int16_t rightSpeed) {
   Left_Motor.run(-leftSpeed); // Flipped since wheel is facing other way
 }
 
-// Returns true when I'm done moving to the desired angle
-void TurnToAngle(double relativeAngle) {
-  // Get the current heading
-  float startAngle = GetCurrentTurnAngle();
-  float targetAngle = startAngle + relativeAngle;
-
-  // Normalize target to [-180, 180]
-  if (targetAngle > 180) targetAngle -= 360;
-  if (targetAngle < -180) targetAngle += 360;
-
-  while (true) {
-    float currentAngle = GetCurrentTurnAngle();
-    float error = targetAngle - currentAngle;
-
-    // Normalize error to [-180, 180]
-    if (error > 180) error -= 360;
-    if (error < -180) error += 360;
-
-    if (abs(error) <= TURN_TOLLERANCE) {
-      break;
-    }
-
-    int16_t turnSpeed = 75;
-    if (error > 0) {
-      // Turn Left
-      Drive(turnSpeed, -turnSpeed);
-    } else {
-      // Turn Right
-      Drive(-turnSpeed, turnSpeed);
-    }
-  }
-
-  Stop();
-}
-
-void LFollow() {
+float LFollow() {
   static uint16_t qtrValues[qtrSensorCount];
   double qtrPosition = qtr.readLineBlack(qtrValues);
 
@@ -351,6 +257,8 @@ void LFollow() {
   int16_t rightSpeed = constrain(SpeedMultiplier - pidOutput, 0, 255);
 
   Drive(leftSpeed, rightSpeed);
+
+  return error;
 }
 
 //
@@ -370,26 +278,38 @@ void LFollowTime(int msecs) {
   Stop();
 }
 
+void LFollowUntilAfterTurn() {
+  static const int bufferSize = 10;
+  static float errorIntegral[bufferSize] = {0};
 
-void LFollowToAngle(int relativeAngle) {
-  float startAngle = GetCurrentTurnAngle();
-  float targetAngle = startAngle + relativeAngle;
+  uint32_t bufferIndex = 0;
+  int16_t totalBias = 0;
+  while(abs(totalBias) < BiasLimit+BiasVar) {
+    errorIntegral[bufferIndex] = LFollow();
+    bufferIndex++;
 
-  // Normalize to [-180, 180]
-  while (targetAngle > 180) targetAngle -= 360;
-  while (targetAngle < -180) targetAngle += 360;
+    if(bufferIndex >= bufferSize) {
+      bufferIndex = 0;
+    }
 
-  while (true) {
-    float currentAngle = GetCurrentTurnAngle();
-    float error = targetAngle - currentAngle;
+    totalBias = 0;
+    for(uint32_t i = 0; i < bufferSize; i++) {
+      totalBias += errorIntegral[i];
+    }
+  }
 
-    // Normalize error to [-180, 180]
-    if (error > 180) error -= 360;
-    if (error < -180) error += 360;
+  while(abs(totalBias) < (BiasLimit + BiasVar)) {
+    errorIntegral[bufferIndex] = LFollow();
+    bufferIndex++;
 
-    if (abs(error) <= TURN_TOLLERANCE) break;
+    if(bufferIndex >= bufferSize) {
+      bufferIndex = 0;
+    }
 
-    LFollow();
+    totalBias = 0;
+    for(uint32_t i = 0; i < bufferSize; i++) {
+      totalBias += errorIntegral[i];
+    }
   }
 
   Stop();
@@ -400,7 +320,7 @@ void DriveToBlack() {
   static uint16_t qtrValues[qtrSensorCount];
   qtr.readCalibrated(qtrValues);
 
-  while(qtrValues[qtrSensorCount / 2] <= 500) {
+  while(qtrValues[qtrSensorCount / 2] <= 100) {
     qtr.readCalibrated(qtrValues);
     Drive(SpeedMultiplier, SpeedMultiplier);
   }
@@ -434,9 +354,14 @@ void ShootPuck() {
 //
 //
 void RightUntilBlack(){
-  while (digitalRead(qtrSensorPins[5]) == LOW) {   //position 5 is left of center
-    Drive(100, 0);
+  static uint16_t qtrValues[qtrSensorCount];
+  qtr.readCalibrated(qtrValues);
+
+  Drive(75, -75);
+  while(qtrValues[3] <= 100) {
+    qtr.readCalibrated(qtrValues);
   }
+
   Stop();
 }
 //
@@ -448,9 +373,13 @@ void RotRightUntilBlack(){
 }
 //
 void LeftUntilBlack(){
-  Drive(0, 100);
+  static uint16_t qtrValues[qtrSensorCount];
+  qtr.readCalibrated(qtrValues);
 
-  while (digitalRead(qtrSensorPins[2]) == LOW && digitalRead(qtrSensorPins[3]) == LOW);
+  Drive(-75, 75);
+  while(qtrValues[3] <= 100) {
+    qtr.readCalibrated(qtrValues);
+  }
 
   Stop();
 }
@@ -463,36 +392,6 @@ void RotLeftUntilBlack(){
   Stop();
 }
 //
-float GetCurrentTurnAngle() {
-  if (mpu.dmpGetCurrentFIFOPacket(FIFOBuffer)) { // Get the Latest packet Add commentMore actions
-    /* Display Euler angles in degrees */
-    mpu.dmpGetQuaternion(&q, FIFOBuffer);
-    mpu.dmpGetGravity(&gravity, &q);
-    mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-  }
-
-  return ConvertToDegrees(ypr[0]);
-}
-
-
-float ConvertToRadians(float degrees) {
-  return degrees*PI/180;
-}
-
-float ConvertToDegrees(float radians) {
-  return radians*180/PI;
-}
-
-bool checkAngle() { //function that returns TRUE when robot has travelled the curve
-  mpu.dmpGetYawPitchRoll(ypr, &q, &gravity);
-  float angle = ypr[0];
-  if (angle < ConvertToRadians(90)){
-    return FALSE;
-  }
-  else{
-    return TRUE;
-  }
-}
 
 void SetQTRCalibration() {
   Serial.println("Calibrating...");
@@ -571,28 +470,29 @@ void LoadQTRCalibration() {
 void goldPath(){                                               //Start of goldPath    +++++++++++++++++++++++++
   DriveToBlack();
   Drive(SpeedMultiplier, SpeedMultiplier);
-  delay(100);
-  TurnToAngle(80);
+  delay(50);
+  RightUntilBlack();
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
   delay(100);
   RulerServo.write(RulerSOut);   //Iniitialize ruler servo down
   AlignServo.write(AlignSDn);   //Initialize align servo down
 
+  LFollowTime(1000);
+  LFollowUntilAfterTurn();
   LFollowTime(500);
-  LFollowToAngle(80);
-  LFollowTime(200);
   Stop();
   ShootPuck();
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
-  LFollowToAngle(80);
+  LFollowTime(500);
+  LFollowUntilAfterTurn();
 
-  LFollowTime(1500);
-  delay(2800);
+  LFollowTime(2000);
+  delay(3000);
 
-  LFollowToAngle(80);
-  LFollowTime(200);
+  LFollowUntilAfterTurn();
+  LFollowTime(500);
   Stop();
   ShootPuck();
 }   //end of void goldPath
@@ -602,7 +502,7 @@ void blackPath(){     //                                          Start of black
   DriveToBlack();
   Drive(SpeedMultiplier, SpeedMultiplier);
   delay(100);
-  TurnToAngle(-80);
+  LeftUntilBlack();
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
   delay(100);
@@ -610,28 +510,29 @@ void blackPath(){     //                                          Start of black
   AlignServo.write(AlignSDn);   //Initialize align servo down
 
 
-  LFollowTime(500);
-  LFollowToAngle(-80);
-  LFollowTime(150);
+  LFollowTime(1000);
+  LFollowUntilAfterTurn();
+  LFollowTime(700);
   Stop();
   ShootPuck();
 
   ChopServo.write(ChopSDn);     //Initialize chop servo down
-  LFollowToAngle(-80);
+  LFollowUntilAfterTurn();
 
-  LFollowTime(100);
-  delay(100);
-  TurnToAngle(-30);
-  delay(250);
-  Drive(SpeedMultiplier, SpeedMultiplier);
+  LFollowTime(500);
+  delay(200);
+  Drive(0, 75);
   delay(1000);
+  Drive(SpeedMultiplier, SpeedMultiplier);
+  delay(500);
   Stop();
-  TurnToAngle(60);
+  Drive(75, 0);
+  delay(1500);
   DriveToBlack();
 
   LFollowTime(1000);
-  LFollowToAngle(-80);
-  LFollowTime(225);
+  LFollowUntilAfterTurn();
+  LFollowTime(700);
   Stop();
   ShootPuck();
 
